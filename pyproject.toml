@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kamino-sentinel"
+version = "0.1.0"
+description = "High-frequency monitoring and automated risk telemetry daemon for Kamino Finance on Solana."
+readme = "README.md"
+authors = [
+    { name = "Showrojeet Chugh", email = "showrojeet@gmail.com" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "httpx>=0.25.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "click>=8.1.0",
+    "tabulate>=0.9.0"
+]
+
+[project.scripts]
+kamino-sentinel = "kamino_sentinel.cli:main"
