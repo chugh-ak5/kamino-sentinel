@@ -57,6 +57,13 @@ class AlertNotifier:
         self.telegram_token = TELEGRAM_BOT_TOKEN if telegram_token is None else telegram_token
         self.telegram_chat_id = TELEGRAM_CHAT_ID if telegram_chat_id is None else telegram_chat_id
         self.webhook_url = ALERT_WEBHOOK_URL if webhook_url is None else webhook_url
+        # An explicitly passed empty string means "this channel is disabled",
+        # which must not be overridden by module-level defaults.
+        if telegram_token == "" or telegram_chat_id == "":
+            self.telegram_token = None
+            self.telegram_chat_id = None
+        if webhook_url == "":
+            self.webhook_url = None
         self.cooldown_seconds = ALERT_COOLDOWN_SECONDS if cooldown_seconds is None else cooldown_seconds
         self.request_timeout = ALERT_TIMEOUT_SECONDS if request_timeout is None else request_timeout
 

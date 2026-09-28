@@ -10,13 +10,29 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-# Automatically load .env if present in current directory or project root
-def _load_env_file():
+# Automatically load .env if present in current directory or project root.
+#
+# The loader is intentionally skipped under pytest (and can be disabled
+# explicitly with KAMINO_SENTINEL_NO_DOTENV=1) so that tests which control the
+# environment via monkeypatch are not polluted by a developer's real .env file.
+def _dotenv_disabled() -> bool:
+    if os.environ.get("KAMINO_SENTINEL_NO_DOTENV", "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "pytest" in os.environ.get("_", ""):
+        return True
+    return False
+
+
+def _load_env_file() -> None:
+    if _dotenv_disabled():
+        return
     env_paths = [Path.cwd() / ".env", Path(__file__).resolve().parent.parent / ".env"]
-    for p in env_paths:
-        if p.exists() and p.is_file():
+    for path in env_paths:
+        if path.exists() and path.is_file():
             try:
-                with open(p, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
@@ -27,6 +43,7 @@ def _load_env_file():
             except Exception:
                 pass
             break
+
 
 _load_env_file()
 
