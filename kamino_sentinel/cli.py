@@ -3,10 +3,42 @@ CLI Entrypoint for Kamino Sentinel with Zero-Dependency Fallback.
 """
 
 import argparse
+import json
+import logging
 import sys
+
+from kamino_sentinel import config
 from kamino_sentinel.config import KNOWN_MARKETS
 from kamino_sentinel.models import ObligationMetrics, RiskLevel
 from kamino_sentinel.sentinel import KaminoSentinel
+
+logger = logging.getLogger("kamino_sentinel.cli")
+
+
+def configure_logging(level: str) -> None:
+    """Configure root logging once, honouring LOG_JSON for log shippers."""
+    if config.LOG_JSON:
+        fmt = '{"ts":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}'
+    else:
+        fmt = config.LOG_FORMAT
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format=fmt,
+        stream=sys.stderr,
+        force=True,
+    )
+
+
+def check_config(strict: bool = False) -> None:
+    """Surface configuration problems at startup instead of mid-scan."""
+    warnings = config.validate()
+    for w in warnings:
+        logger.warning("config: %s", w)
+    if warnings and strict:
+        print("Configuration errors detected (use --no-strict to ignore):", file=sys.stderr)
+        for w in warnings:
+            print(f"  - {w}", file=sys.stderr)
+        sys.exit(2)
 
 
 def print_market_table(market: str, reserves):
@@ -40,6 +72,44 @@ def print_market_table(market: str, reserves):
         print(" | ".join(r[i].ljust(col_widths[i]) for i in range(len(r))))
 
     print(f"\n✓ Market Scan Completed. Estimated Market TVL: ${total_tvl:,.2f}\n")
+
+
+def cmd_health(args):
+    """Print resolved configuration and a JSON health snapshot."""
+    warnings = config.validate()
+    snapshot = {
+        "status": "degraded" if warnings else "ok",
+        "rpc_endpoints": config.DEFAULT_RPC_ENDPOINTS,
+        "rpc_timeout_seconds": config.RPC_TIMEOUT_SECONDS,
+        "rpc_total_budget_seconds": config.RPC_TOTAL_BUDGET_SECONDS,
+        "rpc_max_retries": config.RPC_MAX_RETRIES,
+        "poll_interval_seconds": config.DEFAULT_POLL_INTERVAL,
+        "log_level": config.LOG_LEVEL,
+        "telegram_configured": bool(config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID),
+        "webhook_configured": bool(config.ALERT_WEBHOOK_URL),
+        "warnings": warnings,
+    }
+    if args.json:
+        print(json.dumps(snapshot, indent=2))
+    else:
+        print("\n\U0001F3E5 Kamino Sentinel Health\n")
+        print(f"  Status            : {snapshot['status']}")
+        print(f"  RPC endpoints     : {len(snapshot['rpc_endpoints'])} configured")
+        for ep in snapshot["rpc_endpoints"]:
+            print(f"      - {ep}")
+        print(f"  Request timeout   : {snapshot['rpc_timeout_seconds']}s")
+        print(f"  Total budget      : {snapshot['rpc_total_budget_seconds']}s")
+        print(f"  Max retries       : {snapshot['rpc_max_retries']}")
+        print(f"  Poll interval     : {snapshot['poll_interval_seconds']}s")
+        print(f"  Telegram alerts   : {'yes' if snapshot['telegram_configured'] else 'no'}")
+        print(f"  Webhook alerts    : {'yes' if snapshot['webhook_configured'] else 'no'}")
+        if warnings:
+            print("\n  \u26A0 Warnings:")
+            for w in warnings:
+                print(f"      - {w}")
+        print()
+    if warnings and args.strict:
+        sys.exit(2)
 
 
 def cmd_market(args):
@@ -126,6 +196,8 @@ def cmd_user(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="kamino-sentinel", description="Kamino Sentinel: Risk & Yield Telemetry Daemon for Kamino Finance on Solana.")
+    parser.add_argument("--log-level", default=None, help="Override log level (DEBUG/INFO/WARNING/ERROR)")
+    parser.add_argument("--no-strict", action="store_true", help="Do not exit on configuration warnings")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # market command
@@ -146,12 +218,28 @@ def main():
     p_user.add_argument("--market", "-m", default="main", help="Lending market")
     p_user.set_defaults(func=cmd_user)
 
+    # health command
+    p_health = subparsers.add_parser("health", help="Show resolved config and health snapshot")
+    p_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_health.add_argument("--strict", action="store_true", help="Exit non-zero on config warnings")
+    p_health.set_defaults(func=cmd_health)
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         sys.exit(0)
 
-    args.func(args)
+    configure_logging(getattr(args, "log_level", None) or config.LOG_LEVEL)
+
+    # `health` reports problems itself; everything else fails fast on bad config.
+    if args.command != "health":
+        check_config(strict=not getattr(args, "no_strict", False))
+
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user; exiting.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

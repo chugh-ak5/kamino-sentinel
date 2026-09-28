@@ -7,7 +7,13 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from kamino_sentinel.alerts import AlertNotifier
-from kamino_sentinel.config import KLEND_PROGRAM_ID, KNOWN_MARKETS
+from kamino_sentinel.config import (
+    DEFAULT_POLL_INTERVAL,
+    KLEND_PROGRAM_ID,
+    KNOWN_MARKETS,
+    MAX_CONCURRENT_RPC_CALLS,
+)
+from kamino_sentinel.rpc import RpcError
 from kamino_sentinel.models import AlertEvent, ObligationMetrics, ReserveMetrics, RiskLevel
 from kamino_sentinel.parser import KaminoAccountParser, decode_base64_account
 from kamino_sentinel.rpc import PriceOracleClient, SolanaRpcClient
@@ -28,6 +34,15 @@ class KaminoSentinel:
         self.oracle = oracle_client or PriceOracleClient()
         self.notifier = notifier or AlertNotifier()
 
+        # Runtime counters, useful for health/observability endpoints.
+        self.stats: Dict[str, int] = {
+            "scans": 0,
+            "obligations_seen": 0,
+            "alerts_dispatched": 0,
+            "parse_errors": 0,
+            "rpc_errors": 0,
+        }
+
     def get_market_overview(self, market_key: str = "main") -> List[ReserveMetrics]:
         market_meta = KNOWN_MARKETS.get(market_key, KNOWN_MARKETS["main"])
         market_address = market_meta["address"]
@@ -39,17 +54,27 @@ class KaminoSentinel:
             {"memcmp": {"offset": 32, "bytes": market_address}}
         ]
 
-        raw_accounts = self.rpc.get_program_accounts(
-            program_id=KLEND_PROGRAM_ID,
-            filters=filters
-        )
+        try:
+            raw_accounts = self.rpc.get_program_accounts(
+                program_id=KLEND_PROGRAM_ID,
+                filters=filters
+            )
+        except RpcError as exc:
+            self.stats["rpc_errors"] += 1
+            logger.error("RPC failure fetching reserves: %s", exc)
+            raw_accounts = []
 
         reserves: List[ReserveMetrics] = []
         for item in raw_accounts:
             pubkey = item.get("pubkey", "")
             acc_data = item.get("account", {}).get("data")
-            raw_bytes = decode_base64_account(acc_data)
-            res = KaminoAccountParser.parse_reserve_account(pubkey, raw_bytes)
+            try:
+                raw_bytes = decode_base64_account(acc_data)
+                res = KaminoAccountParser.parse_reserve_account(pubkey, raw_bytes)
+            except Exception as exc:  # noqa: BLE001 - one bad account must not kill the scan
+                self.stats["parse_errors"] += 1
+                logger.warning("Skipping unparseable reserve %s: %s", pubkey, exc)
+                continue
             if res:
                 reserves.append(res)
 
@@ -130,17 +155,27 @@ class KaminoSentinel:
             {"memcmp": {"offset": 72, "bytes": market_address}}
         ]
 
-        raw_accounts = self.rpc.get_program_accounts(
-            program_id=KLEND_PROGRAM_ID,
-            filters=filters
-        )
+        try:
+            raw_accounts = self.rpc.get_program_accounts(
+                program_id=KLEND_PROGRAM_ID,
+                filters=filters
+            )
+        except RpcError as exc:
+            self.stats["rpc_errors"] += 1
+            logger.error("RPC failure fetching obligations for %s: %s", wallet_pubkey, exc)
+            return []
 
         obligations: List[ObligationMetrics] = []
         for item in raw_accounts:
             pubkey = item.get("pubkey", "")
             acc_data = item.get("account", {}).get("data")
-            raw_bytes = decode_base64_account(acc_data)
-            ob = KaminoAccountParser.parse_obligation_account(pubkey, raw_bytes)
+            try:
+                raw_bytes = decode_base64_account(acc_data)
+                ob = KaminoAccountParser.parse_obligation_account(pubkey, raw_bytes)
+            except Exception as exc:  # noqa: BLE001
+                self.stats["parse_errors"] += 1
+                logger.warning("Skipping unparseable obligation %s: %s", pubkey, exc)
+                continue
             if ob:
                 obligations.append(ob)
 
@@ -162,27 +197,79 @@ class KaminoSentinel:
                 health_factor=obligation.health_factor
             )
             self.notifier.dispatch(event)
+            self.stats["alerts_dispatched"] += 1
             return event
         return None
 
     def watch(
         self,
         wallet_pubkey: str,
-        interval: int = 30,
-        iteration_callback: Optional[Callable[[List[ObligationMetrics], List[AlertEvent]], None]] = None
+        interval: Optional[int] = None,
+        iteration_callback: Optional[Callable[[List[ObligationMetrics], List[AlertEvent]], None]] = None,
+        max_iterations: Optional[int] = None,
     ) -> None:
-        logger.info("Starting Kamino Sentinel watch daemon for %s (interval: %ds)", wallet_pubkey, interval)
+        """Poll a wallet's obligations forever (or `max_iterations` times).
+
+        Each cycle is fully isolated: a failure in one obligation, or in the
+        RPC layer, is logged and the daemon keeps running. This is what makes
+        it safe to run under systemd/Docker without a supervisor restart loop.
+        """
+        interval = interval or DEFAULT_POLL_INTERVAL
+        logger.info(
+            "Starting Kamino Sentinel watch daemon for %s (interval: %ds, max_iterations: %s)",
+            wallet_pubkey,
+            interval,
+            max_iterations if max_iterations is not None else "unlimited",
+        )
+
+        iteration = 0
         while True:
+            if max_iterations is not None and iteration >= max_iterations:
+                logger.info("Reached max_iterations (%d); exiting watch loop.", max_iterations)
+                return
+            iteration += 1
+            self.stats["scans"] += 1
+
             try:
                 obs = self.get_user_obligations(wallet_pubkey)
+                self.stats["obligations_seen"] += len(obs)
+
                 alerts: List[AlertEvent] = []
                 for ob in obs:
-                    alert = self.evaluate_obligation_risk(ob)
+                    try:
+                        alert = self.evaluate_obligation_risk(ob)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Risk evaluation failed for obligation %s: %s",
+                            getattr(ob, "pubkey", "?"),
+                            exc,
+                        )
+                        continue
                     if alert:
                         alerts.append(alert)
-                if iteration_callback:
-                    iteration_callback(obs, alerts)
-            except Exception as e:
-                logger.error("Error in sentinel polling cycle: %s", e)
 
-            time.sleep(interval)
+                if iteration_callback:
+                    try:
+                        iteration_callback(obs, alerts)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("iteration_callback raised: %s", exc)
+
+                logger.info(
+                    "Scan #%d complete: %d obligations, %d alerts (endpoint: %s)",
+                    iteration,
+                    len(obs),
+                    len(alerts),
+                    self.rpc.current_endpoint,
+                )
+            except KeyboardInterrupt:
+                logger.info("Watch loop interrupted; shutting down cleanly.")
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.stats["rpc_errors"] += 1
+                logger.error("Error in sentinel polling cycle: %s", exc)
+
+            try:
+                time.sleep(interval)
+            except KeyboardInterrupt:
+                logger.info("Watch loop interrupted during sleep; shutting down cleanly.")
+                return
