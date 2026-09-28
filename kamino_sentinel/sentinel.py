@@ -12,6 +12,7 @@ from kamino_sentinel.config import (
     KLEND_PROGRAM_ID,
     KNOWN_MARKETS,
     MAX_CONCURRENT_RPC_CALLS,
+    RESERVE_DISCRIMINATOR_B58,
 )
 from kamino_sentinel.rpc import RpcError
 from kamino_sentinel.models import AlertEvent, ObligationMetrics, ReserveMetrics, RiskLevel
@@ -49,8 +50,9 @@ class KaminoSentinel:
 
         logger.info("Fetching reserves for %s (%s)", market_meta["name"], market_address)
 
-        # Query on-chain reserve accounts with memcmp filter for lending market
+        # Query on-chain reserve accounts with discriminator + lending market filters
         filters = [
+            {"memcmp": {"offset": 0, "bytes": RESERVE_DISCRIMINATOR_B58}},
             {"memcmp": {"offset": 32, "bytes": market_address}}
         ]
 

@@ -76,6 +76,12 @@ RPC_BACKOFF_MAX_SECONDS: float = _env_float("RPC_BACKOFF_MAX_SECONDS", 8.0)
 # Kamino program / markets
 # ---------------------------------------------------------------------------
 KLEND_PROGRAM_ID = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+RESERVE_DISCRIMINATOR_HEX = "2bf2ccca1af73b7f"
+RESERVE_DISCRIMINATOR_B58 = "8MMas8GHex6"
+RESERVE_DISCRIMINATOR_BYTES = bytes.fromhex(RESERVE_DISCRIMINATOR_HEX)
+OBLIGATION_DISCRIMINATOR_HEX = "a8ce8d763e22873f"
+OBLIGATION_DISCRIMINATOR_B58 = "KzR9u3M2y6r"
+OBLIGATION_DISCRIMINATOR_BYTES = bytes.fromhex(OBLIGATION_DISCRIMINATOR_HEX)
 
 KNOWN_MARKETS: Dict[str, Dict[str, str]] = {
     "main": {

@@ -6,7 +6,11 @@ import base64
 import struct
 from typing import Any, Dict, List, Optional
 
-from kamino_sentinel.config import TOKEN_MINTS
+from kamino_sentinel.config import (
+    OBLIGATION_DISCRIMINATOR_BYTES,
+    RESERVE_DISCRIMINATOR_BYTES,
+    TOKEN_MINTS,
+)
 from kamino_sentinel.models import ObligationMetrics, Position, ReserveMetrics, RiskLevel
 
 
@@ -24,8 +28,8 @@ class KaminoAccountParser:
     """
 
     # KLend account discriminators (SHA-256 of "account:Reserve" and "account:Obligation")
-    RESERVE_DISCRIMINATOR = bytes([0x2B, 0xC4, 0x1A, 0xCE, 0x5C, 0x93, 0x01, 0xEE])
-    OBLIGATION_DISCRIMINATOR = bytes([0xA8, 0xCE, 0x8D, 0x76, 0x3E, 0x22, 0x87, 0x3F])
+    RESERVE_DISCRIMINATOR = RESERVE_DISCRIMINATOR_BYTES
+    OBLIGATION_DISCRIMINATOR = OBLIGATION_DISCRIMINATOR_BYTES
 
     @staticmethod
     def parse_reserve_account(pubkey: str, raw_bytes: bytes, price_usd: float = 1.0) -> Optional[ReserveMetrics]:
