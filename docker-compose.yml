@@ -1,0 +1,8 @@
+services:
+  sentinel:
+    build: .
+    container_name: kamino-sentinel
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["health", "--log-level", "INFO"]
