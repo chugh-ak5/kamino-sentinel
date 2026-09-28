@@ -43,7 +43,7 @@ class KaminoSentinel:
             "rpc_errors": 0,
         }
 
-    def get_market_overview(self, market_key: str = "main") -> List[ReserveMetrics]:
+    def get_market_overview(self, market_key: str = "main", allow_demo: bool = False) -> List[ReserveMetrics]:
         market_meta = KNOWN_MARKETS.get(market_key, KNOWN_MARKETS["main"])
         market_address = market_meta["address"]
 
@@ -78,14 +78,31 @@ class KaminoSentinel:
             if res:
                 reserves.append(res)
 
-        # If on-chain query returned empty (e.g. rate-limited RPC), provide verified baseline benchmarks
+        # IMPORTANT: never silently substitute fabricated data for a failed scan.
+        # Demo/benchmark data is only returned when the caller explicitly opts in.
         if not reserves:
-            reserves = self._get_benchmark_reserves(market_key)
+            if allow_demo:
+                logger.warning(
+                    "No live reserves returned; falling back to DEMO benchmark data "
+                    "(allow_demo=True). These figures are illustrative, NOT live on-chain values."
+                )
+                reserves = self._get_benchmark_reserves(market_key)
+            else:
+                logger.error(
+                    "No live reserve accounts returned for market '%s'. "
+                    "Returning empty result. (Pass allow_demo=True to use illustrative demo data.)",
+                    market_key,
+                )
 
         return reserves
 
     def _get_benchmark_reserves(self, market_key: str) -> List[ReserveMetrics]:
-        """Provides verified baseline metrics for Kamino core reserves."""
+        """Return ILLUSTRATIVE demo data for Kamino core reserves.
+
+        WARNING: These are static, hand-written sample figures used only for
+        demos, UI development, and offline testing. They are NOT live on-chain
+        values and must never be presented as such.
+        """
         benchmarks = [
             ReserveMetrics(
                 pubkey="d4A2prbA2whesmvHaL88BHecTjbvMjSM2KfFY2qKMSr",

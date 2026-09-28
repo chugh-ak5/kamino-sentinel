@@ -1,5 +1,8 @@
 """
-CLI Entrypoint for Kamino Sentinel with Zero-Dependency Fallback.
+CLI entrypoint for Kamino Sentinel.
+
+Live data is the default. Illustrative sample data is only ever shown when
+the user explicitly passes --demo.
 """
 
 import argparse
@@ -115,7 +118,24 @@ def cmd_health(args):
 def cmd_market(args):
     sentinel = KaminoSentinel()
     try:
-        reserves = sentinel.get_market_overview(market_key=args.market)
+        reserves = sentinel.get_market_overview(
+            market_key=args.market,
+            allow_demo=getattr(args, "demo", False),
+        )
+        if not reserves:
+            print(
+                "\n\u26a0 No live reserve accounts returned.\n"
+                "  This usually means the RPC endpoint is rate-limited or unreachable.\n"
+                "  Re-run with --demo to view illustrative sample data instead.\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if getattr(args, "demo", False):
+            print(
+                "\n\u26a0 DEMO MODE: the figures below are illustrative sample data, "
+                "NOT live on-chain values.\n",
+                file=sys.stderr,
+            )
         print_market_table(args.market, reserves)
     except Exception as e:
         print(f"Error fetching market data: {e}", file=sys.stderr)
@@ -203,6 +223,11 @@ def main():
     # market command
     p_market = subparsers.add_parser("market", help="Scan Kamino Lending market reserves and APYs")
     p_market.add_argument("--market", "-m", default="main", choices=["main", "jlp", "altcoins"], help="Lending market")
+    p_market.add_argument(
+        "--demo",
+        action="store_true",
+        help="Show illustrative sample data if live RPC returns nothing (NOT live values)",
+    )
     p_market.set_defaults(func=cmd_market)
 
     # simulate command
