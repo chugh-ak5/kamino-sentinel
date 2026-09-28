@@ -7,7 +7,28 @@ code changes. Defaults are safe for local development.
 """
 
 import os
+from pathlib import Path
 from typing import Any, Dict, List
+
+# Automatically load .env if present in current directory or project root
+def _load_env_file():
+    env_paths = [Path.cwd() / ".env", Path(__file__).resolve().parent.parent / ".env"]
+    for p in env_paths:
+        if p.exists() and p.is_file():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+_load_env_file()
 
 
 def _env_str(name: str, default: str) -> str:
