@@ -239,6 +239,6 @@ Buy me a coffee if this saved your collateral:
 
 **Showrojeet Chugh**  
 - GitHub: [@chugh-ak5](https://github.com/chugh-ak5)  
-- Email: [showrojeet@gmail.com](mailto:showrojeet@gmail.com)  
 - Focus: Quantitative Trading, Execution Engineering & DeFi Risk Infrastructure
+
 
