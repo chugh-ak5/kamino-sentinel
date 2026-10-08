@@ -227,9 +227,18 @@ pytest tests/ -v
 
 ---
 
+## Support & Tips ☕
+
+If Kamino Sentinel helped you monitor your positions, stress-test your portfolio, or avoid liquidation haircuts, tips to support open-source development are warmly appreciated:
+
+- **Solana (SOL / USDC / SPL):** `7SxuVBaBArDXuKuvCaECB3arkmVN1NGxhSDA2BFZazJH`
+
+---
+
 ## Author
 
 **Showrojeet Chugh**  
 - GitHub: [@chugh-ak5](https://github.com/chugh-ak5)  
 - Email: [showrojeet@gmail.com](mailto:showrojeet@gmail.com)  
 - Focus: Quantitative Trading, Execution Engineering & DeFi Risk Infrastructure
+
