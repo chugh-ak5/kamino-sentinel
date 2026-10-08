@@ -229,9 +229,9 @@ pytest tests/ -v
 
 ## Support & Tips ☕
 
-If Kamino Sentinel helped you monitor your positions, stress-test your portfolio, or avoid liquidation haircuts, tips to support open-source development are warmly appreciated:
+Buy me a coffee if this saved your collateral:
 
-- **Solana (SOL / USDC / SPL):** `7SxuVBaBArDXuKuvCaECB3arkmVN1NGxhSDA2BFZazJH`
+- **SOL / USDC (Solana):** `7SxuVBaBArDXuKuvCaECB3arkmVN1NGxhSDA2BFZazJH`
 
 ---
 
