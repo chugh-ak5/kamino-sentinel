@@ -6,9 +6,9 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-High-frequency monitoring and automated risk telemetry daemon for **Kamino Finance** on Solana.
+High-frequency monitoring, automated risk telemetry, and **atomic liquidation defense engine** for **Kamino Finance** on Solana.
 
-Designed for quantitative traders, risk officers, and liquidity providers managing high-capital borrow/lend positions. Kamino Sentinel continuously tracks on-chain reserve utilization, interest rate curves, and user obligation health factors with real-time liquidation alerts across Telegram and HTTP webhooks.
+Designed for quantitative traders, risk officers, and liquidity providers managing high-capital borrow/lend positions. Kamino Sentinel continuously tracks on-chain reserve utilization, interest rate curves, and user obligation health factors with **real-time liquidation pre-emption, multi-scenario stress shock matrices, and zero-capital flash-unwind planning**.
 
 ---
 
@@ -18,7 +18,7 @@ Designed for quantitative traders, risk officers, and liquidity providers managi
 - **Account Discriminator**: `8MMas8GHex6` (`sha256("account:Reserve")[:8]`)
 - **Main Market Address**: `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF`
 - **Live Discovery**: Verified across **58 on-chain reserve accounts** on Solana Mainnet-Beta via Helius RPC.
-- **Unit Tests**: **44 / 44 tests passing** (100% pass rate across RPC failover, alert throttling, configuration parsing, and obligation math).
+- **Unit Tests**: **51 / 51 tests passing** (100% pass rate across liquidation defense math, flash-unwind equations, RPC failover, alert throttling, and obligation parsing).
 
 ---
 
@@ -38,15 +38,24 @@ Designed for quantitative traders, risk officers, and liquidity providers managi
                               |  - Obligation Health Modeling |
                               +--------------+----------------+
                                              |
-                 +---------------------------+---------------------------+
-                 |                                                       |
-                 v                                                       v
-   +---------------------------+                           +---------------------------+
-   |    Interactive Terminal   |                           |    Alert Dispatcher       |
-   |  - Real-time Market Table |                           |  - Telegram Bot Alerts    |
-   |  - Stress Testing Engine  |                           |  - Webhook Broadcasts     |
-   |  - Position Inspector     |                           |  - Metric Exporters       |
-   +---------------------------+                           +---------------------------+
+             +-------------------------------+-------------------------------+
+             |                                                               |
+             v                                                               v
++-----------------------------+                               +-----------------------------+
+|  Liquidation Defense Engine |                               |       Alert Dispatcher      |
+|  - Liquidation Price Calc   |                               |  - Telegram Alerts + Plan   |
+|  - Stress Shock Matrix      |                               |  - Webhook Broadcasts       |
+|  - Atomic Flash-Unwind Plan |                               |  - Cooldown Suppression     |
+|  - Jito MEV Bundle Route    |                               +-----------------------------+
++--------------+--------------+
+               |
+               v
++-----------------------------+
+|    Interactive Terminal     |
+|  - Real-time Market Table   |
+|  - Position Inspector       |
+|  - Auto-Deleverage Planner  |
++-----------------------------+
 ```
 
 ---
@@ -55,8 +64,10 @@ Designed for quantitative traders, risk officers, and liquidity providers managi
 
 - **Real-Time Reserve Telemetry**: Scans live on-chain Kamino lending reserves (`KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD`), computing exact supply amounts, borrow volumes, available liquidity, and kink-based APY curves.
 - **Obligation Health & Liquidation Risk**: Tracks obligation accounts, calculating real-time Loan-to-Value (LTV), Liquidation Thresholds, and Liquidation Distance.
-- **Stress-Test Simulator**: Evaluates position resilience under rapid asset depreciations (-10% to -50% shock drawdowns) to identify liquidation thresholds before market volatility strikes.
-- **Multi-Channel Alert Dispatch**: Triggers instant notifications over Telegram or custom webhooks with rate-limited cooldown suppression when health factors enter Warning (`< 1.15`) or Critical (`< 1.05`) tiers.
+- **Exact Liquidation Price Analytics**: Calculates the critical threshold price ($P_{liq}$) and percentage buffer distance before liquidator auctions can seize collateral.
+- **Multi-Scenario Stress Testing Matrix**: Evaluates portfolio health across rapid asset drawdowns (0% down to -50% flash crashes), tracking health factor decay and estimated liquidator penalty haircut.
+- **Atomic Auto-Deleveraging & Flash-Unwind Engine**: Solves the simultaneous self-liquidation equation to restore safe Health Factors without requiring spare wallet capital (Flash borrow debt $\rightarrow$ repay obligation $\rightarrow$ withdraw unlocked collateral $\rightarrow$ swap via Jupiter V6 $\rightarrow$ repay flash loan $\rightarrow$ bundle via Jito MEV).
+- **Multi-Channel Alert Dispatch**: Triggers instant notifications over Telegram or custom webhooks with actionable auto-deleveraging recommendations attached to Warning and Critical alerts.
 - **Multi-Endpoint RPC Resilience**: Automatic failover, rotation, and exponential backoff across RPC endpoints.
 
 ---
@@ -75,47 +86,100 @@ pip install -e .
 
 ## Quickstart & CLI Commands
 
-### 1. Scan Kamino Lending Markets (Live)
+### 1. Automated Liquidation Defense Planner (`defend`)
+Generate a step-by-step deleveraging plan to rescue a stressed obligation to a safe Health Factor (e.g., $HF \ge 1.30$):
+
+```bash
+# Self-collateral flash-unwind (zero outside capital required):
+kamino-sentinel defend --collateral 10000 --borrow 7500 --target-hf 1.30 --method flash
+
+# External capital repayment:
+kamino-sentinel defend --collateral 10000 --borrow 7500 --target-hf 1.30 --method repay
+
+# Live on-chain wallet inspection and defense:
+kamino-sentinel defend --wallet <SOLANA_WALLET_ADDRESS> --target-hf 1.25
+```
+
+Sample output:
+```
+🛡️ Automated Deleveraging Defense Plan: Flash-Loan Self Unwind (Zero Capital Required)
+-----------------------------------------------------------------
+  Target Health Factor     : 1.30
+  Current Health Factor    : 1.067
+  Debt to Repay            : $3,519.71
+  Collateral to Withdraw   : $3,532.03
+  Slippage & Routing Fee   : $12.32
+  Resulting Health Factor  : 1.300
+  Resulting LTV            : 61.5%
+  Plan Viability           : ✓ EXECUTABLE
+-----------------------------------------------------------------
+
+  Atomic Execution Route:
+    [1] Flash Loan Provider (Save / Kamino / Solend): Flash Borrow USDC
+        Borrow $3,519.71 of USDC with zero upfront collateral.
+    [2] Kamino Lending (KLend): Repay USDC Debt
+        Repay obligation debt to unlock collateral margin.
+    [3] Kamino Lending (KLend): Withdraw SOL Collateral
+        Withdraw $3,532.03 worth of SOL from reserve.
+    [4] Jupiter Aggregator V6: Swap SOL -> USDC
+        Route swap via Jupiter: convert $3,532.03 of SOL into $3,519.71 of USDC (covering $12.32 slippage/fees).
+    [5] Flash Loan Provider: Repay Flash Loan
+        Close flash loan within atomic transaction block.
+    [6] Jito Block Engine: Submit Atomic MEV Bundle
+        Bundle instructions into atomic Jito bundle with tip to guarantee zero sandwiching and priority.
+```
+
+---
+
+### 2. Run Volatility Stress Tests & Shock Matrices (`simulate`)
+Simulate how flash crashes affect liquidation distance and generate full multi-shock breakdown:
+
+```bash
+kamino-sentinel simulate --collateral 10000 --borrow 6500 --price-drop 20 --price 150 --asset SOL
+```
+
+Sample output:
+```
+📊 Kamino Obligation Stress Simulation & Liquidation Defense
+
+Asset Configuration: 66.67 SOL @ $150.00 | Borrow: $6,500.00
+Liquidation Threshold Price : $121.87 SOL
+Liquidation Buffer Distance : 18.8% price drop
+
+⚡ Multi-Scenario Asset Shock Matrix
+Shock | Collateral (USD) | Borrow (USD) | Health Factor | Risk Level   | Est. Penalty
+------+------------------+--------------+---------------+--------------+-------------
+-0%   | $10,000.00       | $6,500.00    | 1.231         | CAUTION      | -           
+-10%  | $9,000.00        | $6,500.00    | 1.108         | WARNING      | -           
+-20%  | $8,000.00        | $6,500.00    | 0.985         | LIQUIDATABLE | $520.00     
+-30%  | $7,000.00        | $6,500.00    | 0.862         | LIQUIDATABLE | $520.00     
+-40%  | $6,000.00        | $6,500.00    | 0.738         | LIQUIDATABLE | $520.00     
+-50%  | $5,000.00        | $6,500.00    | 0.615         | LIQUIDATABLE | $520.00     
+```
+
+---
+
+### 3. Scan Kamino Lending Markets (`market`)
 Display live reserve liquidity, utilization rates, and APYs across major Solana pools:
 
 ```bash
-# Supply a dedicated RPC key in SOLANA_RPC_URL for live on-chain data:
 export SOLANA_RPC_URL="https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY"
 
 kamino-sentinel market --market main
 ```
 
-Sample output:
-```
-2026-09-28 14:56:27 | INFO | kamino_sentinel.sentinel | Fetching reserves for Kamino Main Lending Market (7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF)
+---
 
-⚡ Kamino Lending Reserves: MAIN (Kamino Main Lending Market)
-
-Asset  | Price (USD) | Total Supply         | Total Borrows        | Available Liq        | Utilization | Supply APY | Borrow APY
--------+-------------+----------------------+----------------------+----------------------+-------------+------------+-----------
-SOL    |     $152.40 |  1,420,550.0         |    842,300.0         |     578,250.0        |    59.3%    |      6.84% |      8.92%
-USDC   |       $1.00 | 185,420,000.0        | 152,800,000.0        |  32,620,000.0        |    82.4%    |     10.12% |     12.45%
-JitoSOL|     $178.60 |    890,400.0         |    124,000.0         |     766,400.0        |    13.9%    |      8.15% |      3.80%
-USDT   |       $1.00 |  45,120,000.0        |  36,800,000.0        |   8,320,000.0        |    81.6%    |      9.80% |     11.90%
-
-✓ Market Scan Completed. (58 on-chain reserves parsed)
-```
-
-### 2. Inspect a Wallet's Obligations
-Check any Solana wallet address for active borrow/lend positions:
+### 4. Inspect a Wallet's Obligations (`user`)
+Check any Solana wallet address for active borrow/lend positions and recommended remediation:
 
 ```bash
 kamino-sentinel user <SOLANA_WALLET_ADDRESS>
 ```
 
-### 3. Run Volatility Stress Tests
-Simulate how sudden crypto market drops affect liquidation health:
+---
 
-```bash
-kamino-sentinel simulate --collateral 10000 --borrow 6500 --price-drop 20
-```
-
-### 4. Configuration Health Check
+### 5. Configuration Health Check (`health`)
 Validate RPC connectivity, failover endpoints, and alert channels:
 
 ```bash
@@ -124,27 +188,41 @@ kamino-sentinel health
 
 ---
 
-## Quantitative Risk Math
+## Quantitative Risk Math & Formulas
 
-### 1. Loan-to-Value (LTV)
-$$\text{LTV} = \frac{\sum \text{Borrow Value (USD)}}{\sum \text{Collateral Value (USD)}}$$
-
-### 2. Health Factor ($HF$)
+### 1. Health Factor ($HF$)
 $$\text{HF} = \frac{\sum (\text{Collateral Value}_i \times \text{Liquidation Threshold}_i)}{\sum \text{Borrow Value}_j}$$
 
 - **$HF > 1.25$**: **SAFE** (Sufficient solvency buffer)
 - **$1.15 < HF \le 1.25$**: **CAUTION** (Monitor asset volatility)
 - **$1.05 < HF \le 1.15$**: **WARNING** (High risk of liquidation call)
 - **$1.00 < HF \le 1.05$**: **CRITICAL** (Imminent liquidation risk)
-- **$HF < 1.00$**: **LIQUIDATABLE** (Position eligible for liquidator auction)
+- **$HF < 1.00$**: **LIQUIDATABLE** (Eligible for liquidator seizure)
+
+### 2. Liquidation Price ($P_{liq}$) & Buffer Distance
+For collateral quantity $Q_{coll}$ with aggregate liquidation threshold $LT$ and total debt $D$:
+$$P_{liq} = \frac{D}{Q_{coll} \times LT}$$
+$$\text{Buffer Distance (\%)} = \frac{P_{current} - P_{liq}}{P_{current}} \times 100\%$$
+
+### 3. Self-Collateral Flash-Unwind Simultaneous Equation
+When deleveraging with **zero external capital**, the user borrows $x$ debt token via flash loan, repays debt, withdraws $y = x \cdot (1 + s)$ collateral (where $s$ is DEX swap fee + slippage), and sells it via Jupiter Aggregator:
+
+$$\text{HF}_{\text{target}} = \frac{(C - x(1 + s)) \times LT}{D - x}$$
+
+Solving algebraically for required flash repayment $x$:
+$$x = \frac{\text{HF}_{\text{target}} \cdot D - C \cdot LT}{\text{HF}_{\text{target}} - (1 + s) \cdot LT}$$
 
 ---
 
 ## Development & Testing
 
-Run the test suite:
+Run the full unit test suite:
 ```bash
 pytest tests/ -v
+```
+
+```
+============================== 51 passed in 11.27s ===============================
 ```
 
 ---

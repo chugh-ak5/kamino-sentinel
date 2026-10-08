@@ -89,6 +89,70 @@ class ObligationMetrics:
         else:
             self.risk_level = RiskLevel.SAFE
 
+    def effective_liquidation_threshold(self) -> float:
+        """Returns effective aggregate liquidation threshold ratio."""
+        if self.total_collateral_value_usd > 0 and self.liquidation_threshold_value_usd > 0:
+            return min(0.95, max(0.50, self.liquidation_threshold_value_usd / self.total_collateral_value_usd))
+        return 0.80
+
+    def get_liquidation_price(self, collateral_units: float) -> float:
+        """Calculates asset price where HF reaches 1.00."""
+        from kamino_sentinel.defense import LiquidationDefenseEngine
+        lt = self.effective_liquidation_threshold()
+        return LiquidationDefenseEngine.calculate_liquidation_price(
+            collateral_amount=collateral_units,
+            borrow_value_usd=self.total_borrow_value_usd,
+            liquidation_threshold=lt,
+        )
+
+    def get_liquidation_distance_pct(self, current_price: float, collateral_units: float) -> float:
+        """Percentage price drop buffer before liquidation."""
+        from kamino_sentinel.defense import LiquidationDefenseEngine
+        liq_price = self.get_liquidation_price(collateral_units)
+        return LiquidationDefenseEngine.calculate_liquidation_distance_pct(
+            current_price=current_price,
+            liquidation_price=liq_price,
+        )
+
+    def run_stress_test(self, shock_percentages: Optional[List[float]] = None):
+        """Generates stress testing scenario matrix."""
+        from kamino_sentinel.defense import LiquidationDefenseEngine
+        lt = self.effective_liquidation_threshold()
+        return LiquidationDefenseEngine.run_stress_matrix(
+            collateral_usd=self.total_collateral_value_usd,
+            borrow_usd=self.total_borrow_value_usd,
+            liquidation_threshold=lt,
+            shock_percentages=shock_percentages,
+        )
+
+    def plan_deleverage(
+        self,
+        target_health_factor: float = 1.25,
+        use_flash_unwind: bool = True,
+        fee_and_slippage: float = 0.0035,
+        collateral_symbol: str = "SOL",
+        debt_symbol: str = "USDC",
+    ):
+        """Generates automated deleverage plan to restore health factor."""
+        from kamino_sentinel.defense import LiquidationDefenseEngine
+        lt = self.effective_liquidation_threshold()
+        if use_flash_unwind:
+            return LiquidationDefenseEngine.plan_flash_unwind(
+                collateral_usd=self.total_collateral_value_usd,
+                borrow_usd=self.total_borrow_value_usd,
+                liquidation_threshold=lt,
+                target_health_factor=target_health_factor,
+                swap_fee_and_slippage=fee_and_slippage,
+                collateral_symbol=collateral_symbol,
+                debt_symbol=debt_symbol,
+            )
+        return LiquidationDefenseEngine.plan_external_repayment(
+            collateral_usd=self.total_collateral_value_usd,
+            borrow_usd=self.total_borrow_value_usd,
+            liquidation_threshold=lt,
+            target_health_factor=target_health_factor,
+        )
+
 
 @dataclass
 class AlertEvent:
@@ -98,6 +162,7 @@ class AlertEvent:
     obligation: Optional[str] = None
     health_factor: Optional[float] = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    deleverage_plan: Optional[object] = None
 
     def format_cli(self) -> str:
         color = {
@@ -107,4 +172,9 @@ class AlertEvent:
             RiskLevel.CRITICAL: "red",
             RiskLevel.LIQUIDATABLE: "bold red on white"
         }.get(self.level, "white")
-        return f"[{self.timestamp.strftime('%H:%M:%S')}] [{color}][{self.level.value}][/{color}] {self.title}: {self.message}"
+        base = f"[{self.timestamp.strftime('%H:%M:%S')}] [{color}][{self.level.value}][/{color}] {self.title}: {self.message}"
+        if self.deleverage_plan and getattr(self.deleverage_plan, "debt_to_repay_usd", 0) > 0:
+            plan = self.deleverage_plan
+            base += f"\n  -> Auto-Deleverage Defense: Flash-repay ${plan.debt_to_repay_usd:,.2f} debt (unwind ${plan.collateral_to_withdraw_usd:,.2f} collateral) to reach safe HF {plan.target_health_factor:.2f}."
+        return base
+

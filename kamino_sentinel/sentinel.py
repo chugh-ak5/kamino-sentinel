@@ -203,17 +203,33 @@ class KaminoSentinel:
     def evaluate_obligation_risk(self, obligation: ObligationMetrics) -> Optional[AlertEvent]:
         obligation.calculate_health()
         if obligation.risk_level in (RiskLevel.WARNING, RiskLevel.CRITICAL, RiskLevel.LIQUIDATABLE):
+            plan = None
+            try:
+                plan = obligation.plan_deleverage(target_health_factor=1.25, use_flash_unwind=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not compute auto-deleverage plan: %s", exc)
+
+            msg = (
+                f"Health Factor is {obligation.health_factor:.3f} (LTV: {obligation.current_ltv * 100:.1f}%). "
+                f"Deposits: ${obligation.total_collateral_value_usd:,.2f}, "
+                f"Borrows: ${obligation.total_borrow_value_usd:,.2f}."
+            )
+            if plan and plan.is_viable and plan.debt_to_repay_usd > 0:
+                msg += (
+                    f" ⚡ Auto-Deleverage Defense: Flash-repay ${plan.debt_to_repay_usd:,.2f} debt "
+                    f"(unwind ${plan.collateral_to_withdraw_usd:,.2f} collateral via Jupiter) "
+                    f"to recover Health Factor to {plan.target_health_factor:.2f}."
+                )
+            else:
+                msg += " Immediate collateral top-up or debt repayment advised."
+
             event = AlertEvent(
                 level=obligation.risk_level,
                 title=f"Position Health Degraded: {obligation.risk_level.value}",
-                message=(
-                    f"Health Factor is {obligation.health_factor:.3f} (LTV: {obligation.current_ltv * 100:.1f}%). "
-                    f"Deposits: ${obligation.total_collateral_value_usd:,.2f}, "
-                    f"Borrows: ${obligation.total_borrow_value_usd:,.2f}. "
-                    f"Immediate collateral top-up or debt repayment advised."
-                ),
+                message=msg,
                 obligation=obligation.pubkey,
-                health_factor=obligation.health_factor
+                health_factor=obligation.health_factor,
+                deleverage_plan=plan,
             )
             self.notifier.dispatch(event)
             self.stats["alerts_dispatched"] += 1

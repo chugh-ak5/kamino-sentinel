@@ -142,11 +142,65 @@ def cmd_market(args):
         sys.exit(1)
 
 
+def print_stress_matrix_table(stress_results):
+    print("\n⚡ Multi-Scenario Asset Shock Matrix")
+    headers = ["Shock", "Collateral (USD)", "Borrow (USD)", "Health Factor", "Risk Level", "Est. Penalty"]
+    rows = []
+    for r in stress_results:
+        penalty_str = f"${r.potential_penalty_usd:,.2f}" if r.potential_penalty_usd > 0 else "-"
+        rows.append([
+            f"-{r.shock_pct:.0f}%",
+            f"${r.collateral_usd:,.2f}",
+            f"${r.borrow_usd:,.2f}",
+            f"{r.health_factor:.3f}",
+            r.risk_level,
+            penalty_str,
+        ])
+    col_widths = [max(len(h), max(len(row[i]) for row in rows)) for i, h in enumerate(headers)]
+    header_line = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    sep_line = "-+-".join("-" * col_widths[i] for i in range(len(headers)))
+    print(header_line)
+    print(sep_line)
+    for row in rows:
+        print(" | ".join(row[i].ljust(col_widths[i]) for i in range(len(row))))
+    print()
+
+
+def print_deleverage_plan(plan):
+    method_title = "Flash-Loan Self Unwind (Zero Capital Required)" if plan.method.value == "FLASH_UNWIND" else "External Capital Repayment"
+    print(f"\n🛡️ Automated Deleveraging Defense Plan: {method_title}")
+    print("-" * 65)
+    print(f"  Target Health Factor     : {plan.target_health_factor:.2f}")
+    print(f"  Current Health Factor    : {plan.current_health_factor:.3f}")
+    print(f"  Debt to Repay            : ${plan.debt_to_repay_usd:,.2f}")
+    if plan.collateral_to_withdraw_usd > 0:
+        print(f"  Collateral to Withdraw   : ${plan.collateral_to_withdraw_usd:,.2f}")
+        print(f"  Slippage & Routing Fee   : ${plan.fee_and_slippage_usd:,.2f}")
+    print(f"  Resulting Health Factor  : {plan.resulting_health_factor:.3f}")
+    print(f"  Resulting LTV            : {plan.resulting_ltv * 100:.1f}%")
+    print(f"  Plan Viability           : {'✓ EXECUTABLE' if plan.is_viable else '✗ INFEASIBLE'}")
+    if not plan.is_viable and plan.unviable_reason:
+        print(f"  Reason                   : {plan.unviable_reason}")
+    print("-" * 65)
+
+    if plan.steps:
+        print("\n  Atomic Execution Route:")
+        for s in plan.steps:
+            print(f"    [{s.step_number}] {s.protocol}: {s.action}")
+            print(f"        {s.detail}")
+    print()
+
+
 def cmd_simulate(args):
-    print("\n📊 Kamino Obligation Stress Simulation\n")
+    print("\n📊 Kamino Obligation Stress Simulation & Liquidation Defense\n")
     collateral = args.collateral
     borrow = args.borrow
     price_drop = args.price_drop
+    asset_price = getattr(args, "price", 150.0)
+    asset_symbol = getattr(args, "asset", "SOL")
+    target_hf = getattr(args, "target_hf", 1.25)
+
+    collateral_units = collateral / asset_price if asset_price > 0 else 0.0
 
     current_ob = ObligationMetrics(
         pubkey="SimulatedObligation11111111111111111111111111",
@@ -155,7 +209,7 @@ def cmd_simulate(args):
         total_collateral_value_usd=collateral,
         total_borrow_value_usd=borrow,
         borrow_limit_usd=round(collateral * 0.75, 2),
-        liquidation_threshold_value_usd=round(collateral * 0.80, 2)
+        liquidation_threshold_value_usd=round(collateral * 0.80, 2),
     )
     current_ob.calculate_health()
 
@@ -167,9 +221,16 @@ def cmd_simulate(args):
         total_collateral_value_usd=stressed_collateral,
         total_borrow_value_usd=borrow,
         borrow_limit_usd=round(stressed_collateral * 0.75, 2),
-        liquidation_threshold_value_usd=round(stressed_collateral * 0.80, 2)
+        liquidation_threshold_value_usd=round(stressed_collateral * 0.80, 2),
     )
     stressed_ob.calculate_health()
+
+    liq_price = current_ob.get_liquidation_price(collateral_units)
+    liq_dist = current_ob.get_liquidation_distance_pct(asset_price, collateral_units)
+
+    print(f"Asset Configuration: {collateral_units:,.2f} {asset_symbol} @ ${asset_price:,.2f} | Borrow: ${borrow:,.2f}")
+    print(f"Liquidation Threshold Price : ${liq_price:,.2f} {asset_symbol}")
+    print(f"Liquidation Buffer Distance : {liq_dist:.1f}% price drop\n")
 
     print(f"Stress Scenario: Baseline vs -{price_drop:.1f}% Asset Price Shock")
     print("-" * 65)
@@ -189,7 +250,48 @@ def cmd_simulate(args):
         print("\n⚡ WARNING: Position enters high liquidation hazard territory (HF <= 1.15). Additional margin required.")
     else:
         print("\n✓ Position maintains adequate solvency margin.")
-    print()
+
+    stress_matrix = current_ob.run_stress_test([0.0, 10.0, 20.0, 30.0, 40.0, 50.0])
+    print_stress_matrix_table(stress_matrix)
+
+    plan_flash = stressed_ob.plan_deleverage(target_health_factor=target_hf, use_flash_unwind=True, collateral_symbol=asset_symbol)
+    print_deleverage_plan(plan_flash)
+
+
+def cmd_defend(args):
+    print("\n🛡️ Kamino Liquidation Defense & Auto-Deleveraging Planner\n")
+    target_hf = args.target_hf
+    method = args.method.lower()
+    use_flash = (method == "flash")
+
+    if args.wallet:
+        print(f"Scanning live obligations for wallet: {args.wallet}...")
+        sentinel = KaminoSentinel()
+        obs = sentinel.get_user_obligations(args.wallet, market_key=args.market)
+        if not obs:
+            print(f"No active loan obligations found for wallet {args.wallet} in market '{args.market}'.")
+            return
+        for i, ob in enumerate(obs, 1):
+            ob.calculate_health()
+            print(f"\n--- Obligation #{i}: {ob.pubkey} ---")
+            print(f"Collateral: ${ob.total_collateral_value_usd:,.2f} | Borrows: ${ob.total_borrow_value_usd:,.2f} | Health Factor: {ob.health_factor:.3f}")
+            plan = ob.plan_deleverage(target_health_factor=target_hf, use_flash_unwind=use_flash)
+            print_deleverage_plan(plan)
+    else:
+        collateral = args.collateral
+        borrow = args.borrow
+        ob = ObligationMetrics(
+            pubkey="SimulatedObligation11111111111111111111111111",
+            owner="SimulatedUser11111111111111111111111111111111",
+            market="7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+            total_collateral_value_usd=collateral,
+            total_borrow_value_usd=borrow,
+            borrow_limit_usd=round(collateral * 0.75, 2),
+            liquidation_threshold_value_usd=round(collateral * 0.80, 2),
+        )
+        ob.calculate_health()
+        plan = ob.plan_deleverage(target_health_factor=target_hf, use_flash_unwind=use_flash)
+        print_deleverage_plan(plan)
 
 
 def cmd_user(args):
@@ -211,6 +313,10 @@ def cmd_user(args):
         print(f"Current LTV:       {ob.current_ltv * 100:.1f}%")
         print(f"Health Factor:     {ob.health_factor:.3f}")
         print(f"Risk Assessment:   {ob.risk_level.value}")
+        if ob.health_factor <= 1.25 and ob.total_borrow_value_usd > 0:
+            plan = ob.plan_deleverage(target_health_factor=1.25, use_flash_unwind=True)
+            if plan.is_viable and plan.debt_to_repay_usd > 0:
+                print(f"⚠️ Recommendation: Flash-repay ${plan.debt_to_repay_usd:,.2f} debt (unwind ${plan.collateral_to_withdraw_usd:,.2f} collateral) to reach safe HF 1.25")
         print("-" * 50)
 
 
@@ -235,7 +341,20 @@ def main():
     p_sim.add_argument("--collateral", "-c", type=float, default=10000.0, help="Collateral USD value")
     p_sim.add_argument("--borrow", "-b", type=float, default=6500.0, help="Borrowed USD value")
     p_sim.add_argument("--price-drop", "-p", type=float, default=20.0, help="Simulated price drop percentage")
+    p_sim.add_argument("--price", type=float, default=150.0, help="Current collateral asset price in USD")
+    p_sim.add_argument("--asset", default="SOL", help="Collateral asset symbol")
+    p_sim.add_argument("--target-hf", type=float, default=1.25, help="Target Health Factor to simulate defense plan")
     p_sim.set_defaults(func=cmd_simulate)
+
+    # defend command
+    p_defend = subparsers.add_parser("defend", help="Generate an automated deleveraging and liquidation defense plan")
+    p_defend.add_argument("--collateral", "-c", type=float, default=10000.0, help="Collateral USD value")
+    p_defend.add_argument("--borrow", "-b", type=float, default=7500.0, help="Borrowed USD value")
+    p_defend.add_argument("--target-hf", type=float, default=1.25, help="Target Health Factor to recover to")
+    p_defend.add_argument("--method", choices=["flash", "repay"], default="flash", help="Deleveraging method: flash loan unwind or external cash repay")
+    p_defend.add_argument("--wallet", "-w", default=None, help="Target live Solana wallet pubkey")
+    p_defend.add_argument("--market", "-m", default="main", help="Lending market")
+    p_defend.set_defaults(func=cmd_defend)
 
     # user command
     p_user = subparsers.add_parser("user", help="Inspect obligations for a Solana wallet")
