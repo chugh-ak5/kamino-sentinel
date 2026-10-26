@@ -146,6 +146,30 @@ class SolanaRpcClient:
         result = self.call("getProgramAccounts", [program_id, config])
         return result or []
 
+    def get_latest_blockhash(self, commitment: str = "confirmed") -> str:
+        """Fetch the latest blockhash from the active Solana RPC."""
+        result = self.call("getLatestBlockhash", [{"commitment": commitment}])
+        if result and "value" in result:
+            return result["value"].get("blockhash", "")
+        return ""
+
+    def simulate_transaction(
+        self,
+        tx_base64: str,
+        sig_verify: bool = False,
+        replace_recent_blockhash: bool = True,
+        commitment: str = "confirmed",
+    ) -> Dict[str, Any]:
+        """Simulate a signed or unsigned Solana transaction on-chain."""
+        config: Dict[str, Any] = {
+            "encoding": "base64",
+            "sigVerify": sig_verify,
+            "replaceRecentBlockhash": replace_recent_blockhash,
+            "commitment": commitment,
+        }
+        result = self.call("simulateTransaction", [tx_base64, config])
+        return result or {}
+
 
 class PriceOracleClient:
     """Fetches real-time market prices for Solana SPL tokens."""

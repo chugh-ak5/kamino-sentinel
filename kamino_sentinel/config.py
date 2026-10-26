@@ -113,7 +113,36 @@ RPC_BACKOFF_MAX_SECONDS: float = _env_float("RPC_BACKOFF_MAX_SECONDS", 8.0)
 # ---------------------------------------------------------------------------
 # Kamino program / markets
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Program IDs & Core System Constants
+# ---------------------------------------------------------------------------
 KLEND_PROGRAM_ID = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+JUPITER_V6_PROGRAM_ID = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+
+# ---------------------------------------------------------------------------
+# Jito MEV & Block Engine
+# ---------------------------------------------------------------------------
+JITO_TIP_FLOOR_URL = _env_str("JITO_TIP_FLOOR_URL", "https://bundles.jito.wtf/api/v1/bundles/tip_floor")
+JITO_TIP_ACCOUNTS: List[str] = [
+    "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+    "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+    "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+    "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+    "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+    "ADuUkR4vqLUMWXxW9gh6D6L8pWHLnjvncy4GoDXBeJvK",
+    "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+    "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+]
+
+# ---------------------------------------------------------------------------
+# Jupiter V6 Swap API
+# ---------------------------------------------------------------------------
+JUPITER_QUOTE_API_URL = _env_str("JUPITER_QUOTE_API_URL", "https://api.jup.ag/swap/v1/quote")
+JUPITER_SWAP_API_URL = _env_str("JUPITER_SWAP_API_URL", "https://api.jup.ag/swap/v1/swap-instructions")
 RESERVE_DISCRIMINATOR_HEX = "2bf2ccca1af73b7f"
 RESERVE_DISCRIMINATOR_B58 = "8MMas8GHex6"
 RESERVE_DISCRIMINATOR_BYTES = bytes.fromhex(RESERVE_DISCRIMINATOR_HEX)

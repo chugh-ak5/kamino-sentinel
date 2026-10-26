@@ -11,8 +11,10 @@ import logging
 import sys
 
 from kamino_sentinel import config
+from kamino_sentinel.builder import CompiledTransaction, build_atomic_deleverage_bundle
 from kamino_sentinel.config import KNOWN_MARKETS
 from kamino_sentinel.models import ObligationMetrics, RiskLevel
+from kamino_sentinel.rpc import SolanaRpcClient
 from kamino_sentinel.sentinel import KaminoSentinel
 
 logger = logging.getLogger("kamino_sentinel.cli")
@@ -191,6 +193,51 @@ def print_deleverage_plan(plan):
     print()
 
 
+def print_compiled_transaction(tx: CompiledTransaction) -> None:
+    print("\n📦 Compiled Solana Versioned Transaction (v0)")
+    print("-" * 65)
+    mtu_pct = (tx.size_bytes / 1232) * 100
+    status_icon = "✓ SAFE" if tx.size_bytes <= 1232 else "⚠️ EXCEEDS MTU"
+    print(f"  Wire Size               : {tx.size_bytes} / 1232 bytes ({mtu_pct:.1f}%) [{status_icon}]")
+    print(f"  Instructions Count      : {tx.num_instructions}")
+    print(f"  Unique Accounts Count   : {tx.accounts_count}")
+    print(f"  Fee Payer               : {tx.payer}")
+    print(f"  Base64 Payload          : {tx.tx_base64[:48]}... (total {len(tx.tx_base64)} chars)")
+    print("-" * 65)
+
+    print("\n  Compiled Instruction Pipeline:")
+    for idx, ix in enumerate(tx.instructions, 1):
+        name = ix.name or f"Instruction #{idx} ({ix.program_id[:8]}..)"
+        acc_cnt = len(ix.accounts)
+        data_len = len(ix.data)
+        print(f"    [{idx}] {name}")
+        print(f"        Program: {ix.program_id} | Accounts: {acc_cnt} | Data: {data_len} bytes")
+
+    if tx.jito_bundle:
+        b = tx.jito_bundle
+        print("\n  ⚡ Jito MEV Bundle Packaging:")
+        print(f"    Tip Amount            : {b.tip_lamports:,} lamports ({b.tip_sol:.6f} SOL)")
+        print(f"    Tip Percentile Target : {b.tip_percentile}")
+        print(f"    Jito Tip Account      : {b.tip_account}")
+        print(f"    Bundled Transactions  : {len(b.transactions)}")
+
+    if tx.simulation:
+        s = tx.simulation
+        sim_status = "✓ SUCCESS" if s.success else "✗ SIMULATION FAILED"
+        print(f"\n  🔬 On-Chain RPC Simulation Result: [{sim_status}]")
+        print(f"    Execution Units       : {s.units_consumed:,} compute units")
+        print(f"    Estimated Tx Fee      : {s.fee:,} lamports")
+        if s.error:
+            print(f"    Simulation Error      : {s.error}")
+        if s.logs:
+            print("    Execution Logs Trace (top 5):")
+            for log in s.logs[:5]:
+                print(f"      > {log}")
+            if len(s.logs) > 5:
+                print(f"      ... and {len(s.logs) - 5} more log lines")
+    print()
+
+
 def cmd_simulate(args):
     print("\n📊 Kamino Obligation Stress Simulation & Liquidation Defense\n")
     collateral = args.collateral
@@ -263,6 +310,9 @@ def cmd_defend(args):
     target_hf = args.target_hf
     method = args.method.lower()
     use_flash = (method == "flash")
+    should_build = getattr(args, "build_tx", False) or getattr(args, "simulate", False)
+    should_simulate = getattr(args, "simulate", False)
+    jito_tip = getattr(args, "jito_tip", "50th")
 
     if args.wallet:
         print(f"Scanning live obligations for wallet: {args.wallet}...")
@@ -277,6 +327,22 @@ def cmd_defend(args):
             print(f"Collateral: ${ob.total_collateral_value_usd:,.2f} | Borrows: ${ob.total_borrow_value_usd:,.2f} | Health Factor: {ob.health_factor:.3f}")
             plan = ob.plan_deleverage(target_health_factor=target_hf, use_flash_unwind=use_flash)
             print_deleverage_plan(plan)
+            if should_build:
+                if plan.is_viable:
+                    rpc = sentinel.rpc if should_simulate else None
+                    tx = build_atomic_deleverage_bundle(
+                        plan=plan,
+                        owner_wallet=args.wallet,
+                        obligation_pubkey=ob.pubkey,
+                        market_key=args.market,
+                        rpc_client=rpc,
+                        include_jito_tip=(jito_tip != "none"),
+                        tip_percentile=jito_tip if jito_tip != "none" else "50th",
+                        simulate=should_simulate,
+                    )
+                    print_compiled_transaction(tx)
+                else:
+                    print("⚠️ Transaction compilation skipped because defense plan is infeasible.")
     else:
         collateral = args.collateral
         borrow = args.borrow
@@ -292,6 +358,22 @@ def cmd_defend(args):
         ob.calculate_health()
         plan = ob.plan_deleverage(target_health_factor=target_hf, use_flash_unwind=use_flash)
         print_deleverage_plan(plan)
+        if should_build:
+            if plan.is_viable:
+                rpc = SolanaRpcClient() if should_simulate else None
+                tx = build_atomic_deleverage_bundle(
+                    plan=plan,
+                    owner_wallet="SimulatedUser11111111111111111111111111111111",
+                    obligation_pubkey=ob.pubkey,
+                    market_key=args.market,
+                    rpc_client=rpc,
+                    include_jito_tip=(jito_tip != "none"),
+                    tip_percentile=jito_tip if jito_tip != "none" else "50th",
+                    simulate=should_simulate,
+                )
+                print_compiled_transaction(tx)
+            else:
+                print("⚠️ Transaction compilation skipped because defense plan is infeasible.")
 
 
 def cmd_user(args):
@@ -354,6 +436,14 @@ def main():
     p_defend.add_argument("--method", choices=["flash", "repay"], default="flash", help="Deleveraging method: flash loan unwind or external cash repay")
     p_defend.add_argument("--wallet", "-w", default=None, help="Target live Solana wallet pubkey")
     p_defend.add_argument("--market", "-m", default="main", help="Lending market")
+    p_defend.add_argument("--build-tx", action="store_true", help="Compile atomic deleverage plan into Solana Versioned Transaction (v0)")
+    p_defend.add_argument("--simulate", action="store_true", help="Simulate compiled transaction on-chain via Solana RPC")
+    p_defend.add_argument(
+        "--jito-tip",
+        choices=["25th", "50th", "75th", "95th", "99th", "none"],
+        default="50th",
+        help="Jito MEV bundle tip percentile (or 'none' to omit Jito tip)",
+    )
     p_defend.set_defaults(func=cmd_defend)
 
     # user command
